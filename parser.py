@@ -7,6 +7,13 @@ from bs4 import BeautifulSoup, Tag
 from utils.url_utils import is_same_domain, page_slug, resolve_link
 
 
+def page_name_from_title(title: str | None, url: str) -> str:
+    """Human-readable page name: document title, else URL path slug."""
+    if title and title.strip():
+        return " ".join(title.split())[:500]
+    return page_slug(url)
+
+
 def parse_seo(url: str, normalized_url: str, html: str, status_code: int, html_path: str) -> dict:
     """
     Purpose: Extract SEO fields from HTML.
@@ -24,7 +31,7 @@ def parse_seo(url: str, normalized_url: str, html: str, status_code: int, html_p
     return {
         "url": url,
         "normalized_url": normalized_url,
-        "page_name": page_slug(url),
+        "page_name": page_name_from_title(title, url),
         "title": title,
         "meta_description": meta,
         "canonical_url": canonical,

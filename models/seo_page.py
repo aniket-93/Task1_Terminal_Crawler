@@ -1,17 +1,15 @@
-"""SEO page record model (in-memory schema before persistence)."""
+"""SEO page record model (in-memory before persistence)."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from models.schema import ALLOWED_FIELDS
-from utils.page_id import make_page_id
+from models.schema import PAGE_FIELDS
 
 
 @dataclass
 class SeoPageRecord:
-    id: str
     domain: str
     url: str
     normalized_url: str
@@ -27,10 +25,11 @@ class SeoPageRecord:
     html_file_path: str = ""
     fetch_method: str = ""
     retry_count: int = 0
+    error: str | None = None
+    is_duplicate: bool = False
 
     def to_mongo_dict(self) -> dict[str, Any]:
-        """Dict restricted to Mongo allowlist (no timestamps; repository adds those)."""
-        return {k: v for k, v in asdict(self).items() if k in ALLOWED_FIELDS}
+        return {k: v for k, v in asdict(self).items() if k in PAGE_FIELDS}
 
 
 def build_seo_page_record(
@@ -39,14 +38,13 @@ def build_seo_page_record(
     domain: str,
     fetch_method: str,
     retry_count: int,
+    error: str | None = None,
+    is_duplicate: bool = False,
 ) -> SeoPageRecord:
-    """Build a page record from parser output plus crawl metadata."""
-    normalized = parsed["normalized_url"]
     return SeoPageRecord(
-        id=make_page_id(normalized),
         domain=domain,
         url=parsed["url"],
-        normalized_url=normalized,
+        normalized_url=parsed["normalized_url"],
         page_name=parsed["page_name"],
         title=parsed.get("title"),
         meta_description=parsed.get("meta_description"),
@@ -59,4 +57,6 @@ def build_seo_page_record(
         html_file_path=parsed.get("html_file_path") or "",
         fetch_method=fetch_method,
         retry_count=retry_count,
+        error=error,
+        is_duplicate=is_duplicate,
     )

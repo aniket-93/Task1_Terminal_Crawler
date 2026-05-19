@@ -79,8 +79,15 @@ def resolve_link(base_url: str, href: str) -> str | None:
 
 
 def page_slug(url: str) -> str:
-    """Last path segment for page_name."""
+    """URL path fallback when no <title> (not used for crawled pages with a title)."""
     path = urlparse(url).path.strip("/")
     if not path:
         return "index"
-    return path.split("/")[-1] or "index"
+    segment = path.split("/")[-1] or "index"
+    if segment.lower() in ("index.html", "index.htm", "index.php", "default.aspx"):
+        if len(path.split("/")) >= 2:
+            return path.split("/")[-2]
+        return "index"
+    if "." in segment:
+        segment = segment.rsplit(".", 1)[0]
+    return segment or "index"

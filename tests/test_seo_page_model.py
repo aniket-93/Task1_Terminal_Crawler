@@ -16,12 +16,15 @@ def test_build_seo_page_record():
         "h3": [],
         "h4": [],
         "http_status_code": 200,
-        "html_file_path": "html/example.com/page-1.html",
+        "html_file_path": "html/example.com/about_index.html",
     }
     record = build_seo_page_record(
         parsed, domain="example.com", fetch_method="playwright", retry_count=0
     )
     assert isinstance(record, SeoPageRecord)
     assert record.domain == "example.com"
-    assert record.id
-    assert record.to_mongo_dict()["url"] == parsed["url"]
+    assert record.is_duplicate is False
+    assert record.error is None
+    doc = record.to_mongo_dict()
+    assert doc["url"] == parsed["url"]
+    assert "domain_id" not in doc

@@ -1,11 +1,28 @@
-"""MongoDB schema: field allowlist, collection naming, indexes."""
+"""MongoDB collection names, field allowlists, and indexes."""
 
-import re
+DOMAINS_COLLECTION = "domains"
+PAGES_COLLECTION = "pages"
 
-# Fields persisted for each crawled page (see models.seo_page.SeoPageRecord).
-ALLOWED_FIELDS = frozenset(
+DOMAIN_STATUSES = frozenset({"queued", "running", "completed", "failed"})
+
+DOMAIN_FIELDS = frozenset(
     {
-        "id",
+        "domain_name",
+        "status",
+        "total_pages",
+        "crawled_pages",
+        "failed_pages",
+        "start_url",
+        "created_at",
+        "updated_at",
+        "last_crawled_at",
+        "total_crawl_time",
+    }
+)
+
+PAGE_FIELDS = frozenset(
+    {
+        "domain_id",
         "domain",
         "url",
         "normalized_url",
@@ -21,19 +38,20 @@ ALLOWED_FIELDS = frozenset(
         "html_file_path",
         "fetch_method",
         "retry_count",
+        "error",
+        "is_duplicate",
         "created_at",
         "updated_at",
     }
 )
 
-INDEX_SPECS = (
-    ("url", {"unique": True}),
-    ("normalized_url", {}),
-    ("id", {"unique": True}),
+DOMAIN_INDEX_SPECS = (
+    ("domain_name", {"unique": True}),
+    ("status", {}),
 )
 
-
-def domain_collection_name(domain: str) -> str:
-    """One collection per domain: pages_example_com."""
-    safe = re.sub(r"[^a-zA-Z0-9_]", "_", domain.lower())
-    return f"pages_{safe}"
+PAGE_INDEX_SPECS = (
+    (("domain_id", "url"), {"unique": True}),
+    ("domain_id", {}),
+    ("normalized_url", {}),
+)

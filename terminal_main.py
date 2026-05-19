@@ -4,10 +4,10 @@ import asyncio
 import json
 import sys
 
-from cli.prompt import prompt_crawl_scope, prompt_domain
+from cli.prompt import prompt_domain
+from config import DB_NAME, MAX_PAGES_WHOLE_SITE
 from crawler import CrawlState, evaluate_crawl_result, run_crawler
-from config import DB_NAME
-from models import domain_collection_name
+from models.schema import DOMAINS_COLLECTION, PAGES_COLLECTION
 from storage import file_storage
 from utils.logging_config import setup_logging
 
@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 def write_summary(state: CrawlState, warnings: list[str]) -> str:
     summary = {
+        "domain_id": state.domain_id,
         "total_pages_crawled": state.page_counter,
         "total_duplicates_found": len(state.duplicate_urls),
         "total_failed_requests": state.total_failures,
@@ -27,9 +28,10 @@ def write_summary(state: CrawlState, warnings: list[str]) -> str:
         "off_domain_skipped": state.off_domain_skipped,
         "warnings": warnings,
         "mongodb_database": DB_NAME,
-        "mongodb_collection": domain_collection_name(state.allowed_host),
+        "mongodb_collections": [DOMAINS_COLLECTION, PAGES_COLLECTION],
         "crawl_mode": state.crawl_mode,
         "max_pages_limit": state.max_pages,
+        "start_url": state.seed_url,
         "list_of_urls": state.crawled_urls,
         "list_of_duplicate_urls": state.duplicate_urls,
         "list_of_failed_urls": state.failed_urls,
@@ -46,17 +48,17 @@ def main() -> int:
 
     try:
         seed_url, allowed_host = prompt_domain()
-        max_pages, crawl_mode = prompt_crawl_scope()
     except ValueError as exc:
         print(f"Error: {exc}")
         return 2
 
-    mode_label = "whole site" if crawl_mode == "whole_site" else f"max {max_pages} pages"
+    max_pages = MAX_PAGES_WHOLE_SITE
+    crawl_mode = "whole_site"
     print(f"\nSeed URL:   {seed_url}")
     print(f"Domain:     {allowed_host}")
-    print(f"Crawl mode: {mode_label}")
+    print(f"Max pages:  {max_pages}")
     print(f"HTML dir:   {file_storage.domain_html_dir(allowed_host)}/")
-    print(f"MongoDB:    {DB_NAME}.{domain_collection_name(allowed_host)}\n")
+    print(f"MongoDB:    {DB_NAME} ({DOMAINS_COLLECTION}, {PAGES_COLLECTION})\n")
 
     try:
         state = asyncio.run(
@@ -72,6 +74,7 @@ def main() -> int:
     summary_path = write_summary(state, warnings)
 
     print("Done.")
+    print(f"  Domain ID:  {state.domain_id}")
     print(f"  Pages:      {state.page_counter}")
     print(f"  Duplicates: {len(state.duplicate_urls)}")
     print(f"  Failed:     {state.total_failures}")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -18,14 +19,20 @@ from config import (
     IGNORE_HTTP_STATUS_CODES,
     MAX_BODY_BYTES,
     MAX_CONCURRENCY,
-    MAX_PAGES,
+    MAX_PAGES_WHOLE_SITE,
     MAX_RETRIES,
     MIN_HTML_BYTES,
     REQUEST_DELAY_MS,
     REQUEST_TIMEOUT_SEC,
     USER_AGENT,
 )
-from db.repository import ping, save_page
+from db.repository import (
+    finish_domain_crawl,
+    ping,
+    save_failed_page,
+    save_page,
+    start_domain_crawl,
+)
 from models import build_seo_page_record
 from parser import extract_links, parse_seo
 from storage import file_storage
@@ -43,8 +50,10 @@ class CrawlState:
     """Per-run crawl statistics and URL tracking."""
 
     allowed_host: str
-    max_pages: int = MAX_PAGES
-    crawl_mode: str = "limited"
+    max_pages: int = MAX_PAGES_WHOLE_SITE
+    crawl_mode: str = "whole_site"
+    domain_id: str | None = None
+    seed_url: str = ""
     visited_urls: set[str] = field(default_factory=set)
     enqueued_urls: set[str] = field(default_factory=set)
     duplicate_urls: list[str] = field(default_factory=list)
@@ -100,7 +109,7 @@ def _final_url(context: PlaywrightCrawlingContext) -> str:
 def _log_duplicate(state: CrawlState, url: str) -> None:
     if url not in state.duplicate_urls:
         state.duplicate_urls.append(url)
-    logger.info("Duplicate URL: %s", url)
+    logger.debug("Duplicate URL skipped: %s", url)
 
 
 async def _sleep_delay() -> None:
@@ -168,7 +177,8 @@ async def _persist_page(
 
     norm = normalize_url(url)
     status_code = int(status) if status is not None else 200
-    html_path, json_path = file_storage.next_page_paths(state.allowed_host, page_num)
+    html_path, json_path = file_storage.paths_for_url(state.allowed_host, url)
+    html_path_for_db = file_storage.relative_html_path(state.allowed_host, url)
 
     try:
         file_storage.save_html(html_path, html)
@@ -178,7 +188,7 @@ async def _persist_page(
             state.page_counter -= 1
         return False
 
-    seo = parse_seo(url, norm, html, status_code, html_path)
+    seo = parse_seo(url, norm, html, status_code, html_path_for_db)
     record = build_seo_page_record(
         seo,
         domain=state.allowed_host,
@@ -190,7 +200,7 @@ async def _persist_page(
     except OSError as exc:
         logger.error("JSON save failed for %s: %s", url, exc)
 
-    if not save_page(state.allowed_host, record):
+    if not state.domain_id or not save_page(state.domain_id, record):
         async with state.lock:
             state.mongo_failures += 1
 
@@ -205,21 +215,23 @@ async def _persist_page(
         url,
         status_code,
         fetch_method,
-        html_path,
+        html_path_for_db,
     )
     if status_code != 200:
         logger.warning("Non-200 status %s for %s", status_code, url)
     return True
 
 
-async def _mark_failed(state: CrawlState, url: str) -> None:
+async def _mark_failed(state: CrawlState, url: str, error: str = "fetch failed after retries") -> None:
     norm = normalize_url(url)
     async with state.lock:
         state.visited_urls.add(norm)
         state.total_failures += 1
         if url not in state.failed_urls:
             state.failed_urls.append(url)
-    logger.error("Failed URL: %s", url)
+    if state.domain_id:
+        save_failed_page(state.domain_id, state.allowed_host, url, error)
+    logger.error("Failed URL: %s (%s)", url, error)
 
 
 async def _enqueue_links(
@@ -255,16 +267,30 @@ async def _enqueue_links(
 async def run_crawler(
     seed_url: str,
     allowed_host: str,
-    max_pages: int = MAX_PAGES,
+    max_pages: int = MAX_PAGES_WHOLE_SITE,
     *,
-    crawl_mode: str = "limited",
+    crawl_mode: str = "whole_site",
 ) -> CrawlState:
     ping()
-    state = CrawlState(allowed_host=allowed_host, max_pages=max_pages, crawl_mode=crawl_mode)
+    state = CrawlState(
+        allowed_host=allowed_host,
+        max_pages=max_pages,
+        crawl_mode=crawl_mode,
+        seed_url=seed_url,
+    )
     seed_norm = normalize_url(seed_url)
     state.enqueued_urls.add(seed_norm)
 
-    logger.info("Crawl start | host=%s | max_pages=%s", allowed_host, max_pages)
+    domain_id = start_domain_crawl(allowed_host, seed_url, max_pages)
+    state.domain_id = domain_id
+    crawl_started_at = time.perf_counter()
+
+    logger.info(
+        "Crawl start | host=%s | domain_id=%s | max_pages=%s",
+        allowed_host,
+        domain_id,
+        max_pages,
+    )
 
     configuration = Configuration(purge_on_start=CRAWLEE_PURGE_ON_START)
     crawler = PlaywrightCrawler(
@@ -355,9 +381,27 @@ async def run_crawler(
                     state.total_retries += 1
                 raise
 
-    await crawler.run(
-        [Request.from_url(seed_norm, user_data={USER_DEPTH: 0, USER_SOURCE: None})]
-    )
+    try:
+        await crawler.run(
+            [Request.from_url(seed_norm, user_data={USER_DEPTH: 0, USER_SOURCE: None})]
+        )
+        ok, _ = evaluate_crawl_result(state)
+        finish_domain_crawl(
+            domain_id,
+            "completed" if ok else "failed",
+            crawled_pages=state.page_counter,
+            failed_pages=state.total_failures,
+            total_crawl_time=time.perf_counter() - crawl_started_at,
+        )
+    except Exception:
+        finish_domain_crawl(
+            domain_id,
+            "failed",
+            crawled_pages=state.page_counter,
+            failed_pages=state.total_failures,
+            total_crawl_time=time.perf_counter() - crawl_started_at,
+        )
+        raise
 
     logger.info(
         "Crawl end | pages=%s | dupes=%s | failed=%s | retries=%s | fallbacks=%s | mongo_err=%s",

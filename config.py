@@ -2,8 +2,8 @@
 
 import os
 
-MAX_PAGES = int(os.getenv("MAX_PAGES", "50"))  # limited crawl (default terminal option 1)
-MAX_PAGES_WHOLE_SITE = int(os.getenv("MAX_PAGES_WHOLE_SITE", "10000"))  # safety cap for "whole site"
+MAX_PAGES = int(os.getenv("MAX_PAGES", "50"))  # optional cap if you pass max_pages manually
+MAX_PAGES_WHOLE_SITE = int(os.getenv("MAX_PAGES_WHOLE_SITE", "50"))  # default terminal crawl limit
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "2"))
 MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", "10"))
 REQUEST_DELAY_MS = int(os.getenv("REQUEST_DELAY_MS", "300"))
