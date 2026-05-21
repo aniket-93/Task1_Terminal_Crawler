@@ -15,6 +15,31 @@ def test_parse_seo():
     assert data["title"] == "T"
     assert data["h1"] == ["H"]
     assert data["page_name"] == "T"
+    assert data["meta_description"] is None
+
+
+def test_meta_description_strict_name_only():
+    html = (
+        '<html><head>'
+        '<meta property="og:description" content="og desc"/>'
+        '<meta name="twitter:description" content="tw desc"/>'
+        '<meta name="description" content="  real description  "/>'
+        "</head><body></body></html>"
+    )
+    data = parse_seo("https://example.com/", "https://example.com/", html, 200, "x")
+    assert data["meta_description"] == "real description"
+
+
+def test_meta_description_og_only_returns_empty():
+    html = '<html><head><meta property="og:description" content="og only"/></head><body></body></html>'
+    data = parse_seo("https://example.com/", "https://example.com/", html, 200, "x")
+    assert data["meta_description"] is None
+
+
+def test_meta_description_missing_returns_empty():
+    html = "<html><head><title>T</title></head><body></body></html>"
+    data = parse_seo("https://example.com/", "https://example.com/", html, 200, "x")
+    assert data["meta_description"] is None
 
 
 def test_page_name_from_catalogue_style_url():

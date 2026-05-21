@@ -10,6 +10,7 @@ DOMAIN_FIELDS = frozenset(
         "domain_name",
         "status",
         "total_pages",
+        "total_urls_crawled",
         "crawled_pages",
         "failed_pages",
         "start_url",

@@ -1,0 +1,26 @@
+{
+  "sequence_counter": 8,
+  "forefront_sequence_counter": 0,
+  "forefront_requests": {},
+  "regular_requests": {
+    "http://westbayeye.com": 0,
+    "http://westbayeye.com/about-us.shtml": 1,
+    "http://westbayeye.com/services.shtml": 2,
+    "http://westbayeye.com/history-of-ferris-eye-care.shtml": 3,
+    "http://westbayeye.com/insurance.shtml": 4,
+    "http://westbayeye.com/about-your-eyes.shtml": 5,
+    "http://westbayeye.com/contact-us.shtml": 6,
+    "http://westbayeye.com/online-payments.shtml": 7
+  },
+  "in_progress_requests": [],
+  "handled_requests": [
+    "http://westbayeye.com/about-us.shtml",
+    "http://westbayeye.com/contact-us.shtml",
+    "http://westbayeye.com/online-payments.shtml",
+    "http://westbayeye.com/history-of-ferris-eye-care.shtml",
+    "http://westbayeye.com",
+    "http://westbayeye.com/services.shtml",
+    "http://westbayeye.com/about-your-eyes.shtml",
+    "http://westbayeye.com/insurance.shtml"
+  ]
+}

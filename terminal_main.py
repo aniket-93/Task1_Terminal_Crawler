@@ -1,12 +1,14 @@
 """Terminal entry point for the SEO crawler."""
 
 import asyncio
-import json
+import html
+import os
 import sys
 
 from cli.prompt import prompt_domain
 from config import DB_NAME, MAX_PAGES_WHOLE_SITE
 from crawler import CrawlState, evaluate_crawl_result, run_crawler
+from db.repository import find_domain_by_name
 from models.schema import DOMAINS_COLLECTION, PAGES_COLLECTION
 from storage import file_storage
 from utils.logging_config import setup_logging
@@ -16,29 +18,54 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def write_summary(state: CrawlState, warnings: list[str]) -> str:
-    summary = {
-        "domain_id": state.domain_id,
-        "total_pages_crawled": state.page_counter,
-        "total_duplicates_found": len(state.duplicate_urls),
-        "total_failed_requests": state.total_failures,
-        "total_retries": state.total_retries,
-        "total_fallbacks": state.total_fallbacks,
-        "mongo_failures": state.mongo_failures,
-        "off_domain_skipped": state.off_domain_skipped,
-        "warnings": warnings,
-        "mongodb_database": DB_NAME,
-        "mongodb_collections": [DOMAINS_COLLECTION, PAGES_COLLECTION],
-        "crawl_mode": state.crawl_mode,
-        "max_pages_limit": state.max_pages,
-        "start_url": state.seed_url,
-        "list_of_urls": state.crawled_urls,
-        "list_of_duplicate_urls": state.duplicate_urls,
-        "list_of_failed_urls": state.failed_urls,
-    }
-    path = file_storage.summary_path(state.allowed_host)
+def write_crawl_summary_html(state: CrawlState, warnings: list[str]) -> str:
+    domain_doc = find_domain_by_name(state.allowed_host) or {}
+    os.makedirs(file_storage.domain_html_dir(state.allowed_host), exist_ok=True)
+    path = file_storage.crawl_summary_html_path(state.allowed_host)
+
+    def row(label: str, value: str) -> str:
+        return f"<tr><th>{html.escape(label)}</th><td>{html.escape(value)}</td></tr>"
+
+    url_list = "\n".join(f"<li>{html.escape(u)}</li>" for u in state.crawled_urls)
+    dup_list = "\n".join(f"<li>{html.escape(u)}</li>" for u in state.duplicate_urls)
+    fail_list = "\n".join(f"<li>{html.escape(u)}</li>" for u in state.failed_urls)
+    warn_list = "\n".join(f"<li>{html.escape(w)}</li>" for w in warnings)
+
+    body = f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/><title>Crawl summary</title></head>
+<body>
+<h1>Crawl summary</h1>
+<table border="1" cellspacing="0" cellpadding="4">
+{row("domain_id", str(state.domain_id or ""))}
+{row("total_pages_crawled (this run)", str(state.page_counter))}
+{row("total_pages_in_mongodb (pages docs)", str(domain_doc.get("total_pages", 0)))}
+{row("total_urls_crawled (success + failed, this run)", str(domain_doc.get("total_urls_crawled", "")))}
+{row("crawled_pages (MongoDB)", str(domain_doc.get("crawled_pages", "")))}
+{row("failed_pages (MongoDB)", str(domain_doc.get("failed_pages", "")))}
+{row("total_duplicates_found", str(len(state.duplicate_urls)))}
+{row("total_failed_requests", str(state.total_failures))}
+{row("total_retries", str(state.total_retries))}
+{row("total_fallbacks", str(state.total_fallbacks))}
+{row("mongo_failures", str(state.mongo_failures))}
+{row("off_domain_skipped", str(state.off_domain_skipped))}
+{row("mongodb_database", DB_NAME)}
+{row("mongodb_collections", f"{DOMAINS_COLLECTION}, {PAGES_COLLECTION}")}
+{row("crawl_mode", state.crawl_mode)}
+{row("max_pages_limit", str(state.max_pages) if state.max_pages > 0 else "unlimited")}
+{row("start_url", state.seed_url)}
+</table>
+<h2>Warnings</h2>
+<ul>{warn_list or "<li>(none)</li>"}</ul>
+<h2>Crawled URLs</h2>
+<ul>{url_list or "<li>(none)</li>"}</ul>
+<h2>Duplicate URLs</h2>
+<ul>{dup_list or "<li>(none)</li>"}</ul>
+<h2>Failed URLs</h2>
+<ul>{fail_list or "<li>(none)</li>"}</ul>
+</body></html>
+"""
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2)
+        f.write(body)
     return path
 
 
@@ -54,9 +81,10 @@ def main() -> int:
 
     max_pages = MAX_PAGES_WHOLE_SITE
     crawl_mode = "whole_site"
+    page_limit_label = str(max_pages) if max_pages > 0 else "unlimited (all same-domain pages)"
     print(f"\nSeed URL:   {seed_url}")
     print(f"Domain:     {allowed_host}")
-    print(f"Max pages:  {max_pages}")
+    print(f"Page limit: {page_limit_label}")
     print(f"HTML dir:   {file_storage.domain_html_dir(allowed_host)}/")
     print(f"MongoDB:    {DB_NAME} ({DOMAINS_COLLECTION}, {PAGES_COLLECTION})\n")
 
@@ -71,11 +99,17 @@ def main() -> int:
         return 1
 
     ok, warnings = evaluate_crawl_result(state)
-    summary_path = write_summary(state, warnings)
+    summary_path = write_crawl_summary_html(state, warnings)
+
+    domain_doc = find_domain_by_name(allowed_host) or {}
+    total_in_mongo = domain_doc.get("total_pages", 0)
+    total_urls_run = domain_doc.get("total_urls_crawled")
 
     print("Done.")
     print(f"  Domain ID:  {state.domain_id}")
     print(f"  Pages:      {state.page_counter}")
+    print(f"  Total pages (MongoDB domains, pages coll count): {total_in_mongo}")
+    print(f"  Total URLs this run (success+fail, domains): {total_urls_run}")
     print(f"  Duplicates: {len(state.duplicate_urls)}")
     print(f"  Failed:     {state.total_failures}")
     print(f"  Retries:    {state.total_retries}")

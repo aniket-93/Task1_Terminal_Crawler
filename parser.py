@@ -22,7 +22,7 @@ def parse_seo(url: str, normalized_url: str, html: str, status_code: int, html_p
     """
     soup = BeautifulSoup(html, "html.parser")
     title = soup.title.get_text(strip=True) if soup.title else None
-    meta = _meta(soup, "name", "description") or _meta(soup, "property", "og:description")
+    meta = _meta_description_name_only(soup)
     canonical = None
     link = soup.find("link", rel=lambda v: v and "canonical" in str(v).lower())
     if link and isinstance(link, Tag) and link.get("href"):
@@ -65,10 +65,24 @@ def extract_links(html: str, base_url: str, allowed_host: str) -> list[str]:
     return out
 
 
-def _meta(soup: BeautifulSoup, attr: str, val: str) -> str | None:
-    tag = soup.find("meta", attrs={attr: val})
-    if tag and isinstance(tag, Tag) and tag.get("content"):
-        return str(tag.get("content")).strip()
+def _meta_description_name_only(soup: BeautifulSoup) -> str | None:
+    """
+    Only <meta name="description" content="..."> (name is exactly "description", case-insensitive).
+    No og:, twitter:, itemprop, or other fallbacks. No match or empty content -> None.
+    """
+    for tag in soup.find_all("meta"):
+        if not isinstance(tag, Tag):
+            continue
+        raw_name = tag.get("name")
+        if raw_name is None:
+            continue
+        if str(raw_name).strip().casefold() != "description":
+            continue
+        raw_content = tag.get("content")
+        if raw_content is None:
+            return None
+        text = str(raw_content).strip()
+        return text if text else None
     return None
 
 

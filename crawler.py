@@ -43,6 +43,16 @@ logger = logging.getLogger(__name__)
 
 USER_DEPTH = "depth"
 USER_SOURCE = "source_url"
+# Crawlee requires a numeric cap; used only when max_pages is 0 (unlimited).
+UNLIMITED_MAX_REQUESTS = 10_000_000
+
+
+def _page_limit_reached(state: CrawlState) -> bool:
+    return state.max_pages > 0 and state.page_counter >= state.max_pages
+
+
+def _max_requests_for_crawl(max_pages: int) -> int:
+    return max_pages * 5 if max_pages > 0 else UNLIMITED_MAX_REQUESTS
 
 
 @dataclass
@@ -170,14 +180,14 @@ async def _persist_page(
     fetch_method: str,
 ) -> bool:
     async with state.lock:
-        if state.page_counter >= state.max_pages:
+        if _page_limit_reached(state):
             return False
         state.page_counter += 1
         page_num = state.page_counter
 
     norm = normalize_url(url)
     status_code = int(status) if status is not None else 200
-    html_path, json_path = file_storage.paths_for_url(state.allowed_host, url)
+    html_path = file_storage.html_path_for_save(state.allowed_host, url)
     html_path_for_db = file_storage.relative_html_path(state.allowed_host, url)
 
     try:
@@ -195,10 +205,6 @@ async def _persist_page(
         fetch_method=fetch_method,
         retry_count=retry_count,
     )
-    try:
-        file_storage.save_json(json_path, record.to_mongo_dict())
-    except OSError as exc:
-        logger.error("JSON save failed for %s: %s", url, exc)
 
     if not state.domain_id or not save_page(state.domain_id, record):
         async with state.lock:
@@ -208,10 +214,10 @@ async def _persist_page(
         state.visited_urls.add(norm)
         state.crawled_urls.append(url)
 
+    page_label = f"{page_num}/{state.max_pages}" if state.max_pages > 0 else str(page_num)
     logger.info(
-        "Page %s/%s | %s | status=%s | %s | %s",
-        page_num,
-        state.max_pages,
+        "Page %s | %s | status=%s | %s | %s",
+        page_label,
         url,
         status_code,
         fetch_method,
@@ -242,7 +248,7 @@ async def _enqueue_links(
     add_requests,
 ) -> None:
     async with state.lock:
-        if state.page_counter >= state.max_pages:
+        if _page_limit_reached(state):
             return
 
     batch: list[Request] = []
@@ -254,7 +260,7 @@ async def _enqueue_links(
             if norm in state.visited_urls or norm in state.enqueued_urls:
                 _log_duplicate(state, norm)
                 continue
-            if state.page_counter >= state.max_pages:
+            if _page_limit_reached(state):
                 return
             state.enqueued_urls.add(norm)
         batch.append(
@@ -281,20 +287,21 @@ async def run_crawler(
     seed_norm = normalize_url(seed_url)
     state.enqueued_urls.add(seed_norm)
 
-    domain_id = start_domain_crawl(allowed_host, seed_url, max_pages)
+    domain_id = start_domain_crawl(allowed_host, seed_url)
     state.domain_id = domain_id
     crawl_started_at = time.perf_counter()
 
+    limit_label = str(max_pages) if max_pages > 0 else "unlimited"
     logger.info(
-        "Crawl start | host=%s | domain_id=%s | max_pages=%s",
+        "Crawl start | host=%s | domain_id=%s | page_limit=%s",
         allowed_host,
         domain_id,
-        max_pages,
+        limit_label,
     )
 
     configuration = Configuration(purge_on_start=CRAWLEE_PURGE_ON_START)
     crawler = PlaywrightCrawler(
-        max_requests_per_crawl=max_pages * 5,
+        max_requests_per_crawl=_max_requests_for_crawl(max_pages),
         max_request_retries=MAX_RETRIES,
         headless=HEADLESS,
         configuration=configuration,
@@ -323,7 +330,7 @@ async def run_crawler(
                 if request_url in state.visited_urls:
                     _log_duplicate(state, request_url)
                     return
-                if state.page_counter >= state.max_pages:
+                if _page_limit_reached(state):
                     return
 
             await _sleep_delay()

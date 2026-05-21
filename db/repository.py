@@ -82,7 +82,7 @@ def _object_id(domain_id: str) -> ObjectId:
         raise ValueError(f"invalid domain_id: {domain_id}") from exc
 
 
-def start_domain_crawl(domain_name: str, start_url: str, total_pages: int) -> str:
+def start_domain_crawl(domain_name: str, start_url: str) -> str:
     """Create or reset domain row; return domain_id as string."""
     _ensure_indexes()
     now = _now_iso()
@@ -92,7 +92,8 @@ def start_domain_crawl(domain_name: str, start_url: str, total_pages: int) -> st
             "$set": {
                 "domain_name": domain_name,
                 "status": "running",
-                "total_pages": total_pages,
+                "total_pages": 0,
+                "total_urls_crawled": 0,
                 "crawled_pages": 0,
                 "failed_pages": 0,
                 "start_url": start_url,
@@ -110,6 +111,11 @@ def start_domain_crawl(domain_name: str, start_url: str, total_pages: int) -> st
     return str(doc["_id"])
 
 
+def count_domain_pages(domain_id: str) -> int:
+    """Total documents in pages for this domain (all crawls)."""
+    return pages_collection().count_documents({"domain_id": _object_id(domain_id)})
+
+
 def finish_domain_crawl(
     domain_id: str,
     status: str,
@@ -121,11 +127,15 @@ def finish_domain_crawl(
     if status not in DOMAIN_STATUSES:
         raise ValueError(f"invalid status: {status}")
     now = _now_iso()
+    total_pages = count_domain_pages(domain_id)
+    total_urls_crawled = crawled_pages + failed_pages
     domains_collection().update_one(
         {"_id": _object_id(domain_id)},
         {
             "$set": {
                 "status": status,
+                "total_pages": total_pages,
+                "total_urls_crawled": total_urls_crawled,
                 "crawled_pages": crawled_pages,
                 "failed_pages": failed_pages,
                 "total_crawl_time": round(total_crawl_time, 2),
